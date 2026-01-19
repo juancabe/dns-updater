@@ -4,6 +4,7 @@ use dns_updater::Runner;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
+    env_logger::init();
     let runner = Runner::new(
         env::var("INTERFACE").expect("The INTERFACE env flag should be set"),
         env::var("POLL_SECS")
@@ -13,4 +14,3 @@ async fn main() {
     );
     runner.run().await
 }
-
