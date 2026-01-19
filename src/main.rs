@@ -1,4 +1,4 @@
-use std::env;
+use std::{env, path::PathBuf};
 
 use dns_updater::Runner;
 
@@ -11,6 +11,8 @@ async fn main() {
             .expect("The POLL_SECS env flag should be set")
             .parse()
             .expect("POLL_SECS should be valid u64"),
+        env::var("DATABASE_FILE").ok().map(PathBuf::from).as_ref(),
     );
     runner.run().await
 }
+

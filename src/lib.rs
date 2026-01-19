@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use tokio::sync::mpsc::channel;
 
 use crate::{ip_grabber::IpGrabber, persistence::Persistence};
@@ -12,8 +14,12 @@ pub struct Runner {
 }
 
 impl Runner {
-    pub fn new(iface: String, poll_secs: u64) -> Self {
-        let pers = Persistence::default();
+    pub fn new(iface: String, poll_secs: u64, pers_file_path: Option<&PathBuf>) -> Self {
+        let pers = if let Some(fp) = pers_file_path {
+            Persistence::new(fp).expect("File should be valid")
+        } else {
+            Persistence::default()
+        };
         let ip = match pers.load_ip() {
             Ok(a) => Some(a),
             Err(e) => match e {
@@ -24,6 +30,7 @@ impl Runner {
                     log::warn!("Error parsing saved IP, using none: {addr_parse_error:?}");
                     None
                 }
+                _ => unreachable!(),
             },
         };
         let grabber = IpGrabber::new(iface, ip).unwrap();
@@ -33,12 +40,19 @@ impl Runner {
             pers,
         }
     }
-    pub async fn run(&self) {
+    pub async fn run(self) {
+        let Runner {
+            grabber,
+            poll_secs: _,
+            pers,
+        } = self;
+
         let (sender, mut receiver) = channel(10000);
-        self.grabber.run(sender, self.poll_secs).await;
+
+        tokio::spawn(async move { grabber.run(sender, self.poll_secs).await });
 
         while let Some(ip) = receiver.recv().await {
-            if let Err(e) = self.pers.replace_ip(&ip) {
+            if let Err(e) = pers.replace_ip(&ip) {
                 log::error!("Error when saving IP: {e:?}");
             }
         }

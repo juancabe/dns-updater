@@ -116,3 +116,4 @@ impl IpGrabber {
         Ok(Ipv6Addr::from(segments))
     }
 }
+

@@ -1,10 +1,13 @@
 use std::fs;
+use std::fs::OpenOptions;
 use std::io;
 use std::net::{AddrParseError, Ipv6Addr};
+use std::path::Path;
 use std::path::PathBuf;
 
 #[derive(Debug)]
 pub enum Error {
+    CannotUseFile(String),
     Io(io::Error),
     Parse(AddrParseError),
 }
@@ -34,6 +37,18 @@ impl Default for Persistence {
 }
 
 impl Persistence {
+    pub fn new(file_path: &Path) -> Result<Self, Error> {
+        let _ = OpenOptions::new()
+            .write(true)
+            .create(true) // Create if it doesn't exist
+            .truncate(false) // Do NOT wipe the file if it exists
+            .open(file_path)
+            .map_err(|e| Error::CannotUseFile(e.to_string()))?;
+
+        Ok(Self {
+            file_path: file_path.to_path_buf(),
+        })
+    }
     /// Overwrites the file with the new IP address
     pub fn replace_ip(&self, ip: &Ipv6Addr) -> Result<(), Error> {
         fs::write(&self.file_path, ip.to_string())?;
@@ -47,3 +62,4 @@ impl Persistence {
         Ok(ip)
     }
 }
+
