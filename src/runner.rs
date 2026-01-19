@@ -65,11 +65,8 @@ impl Runner {
                 log::error!("Error when saving IP: {e:?}");
             }
 
-            // 2. Send Update to FreeDNS (New Logic)
             log::info!("Detected new IP: {}, updating FreeDNS...", ip);
 
-            // Construct the URL according to FreeDNS specs
-            // We append &address= to explicitly set the IPv6 address
             let update_url = format!(
                 "https://freedns.afraid.org/dynamic/update.php?{}&address={}",
                 dns_token, ip
