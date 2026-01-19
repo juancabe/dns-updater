@@ -1,5 +1,16 @@
+use std::env;
+
 use dns_updater::Runner;
 
-fn main() {
-    Runner::default().run();
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
+    let runner = Runner::new(
+        env::var("INTERFACE").expect("The INTERFACE env flag should be set"),
+        env::var("POLL_SECS")
+            .expect("The POLL_SECS env flag should be set")
+            .parse()
+            .expect("POLL_SECS should be valid u64"),
+    );
+    runner.run().await
 }
+
