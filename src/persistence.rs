@@ -30,9 +30,7 @@ pub struct Persistence {
 
 impl Default for Persistence {
     fn default() -> Self {
-        Self {
-            file_path: PathBuf::from("./current_ipv6.txt"),
-        }
+        Self::new(&PathBuf::from("./current_ipv6.txt")).unwrap()
     }
 }
 
@@ -62,4 +60,3 @@ impl Persistence {
         Ok(ip)
     }
 }
-
