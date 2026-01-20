@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use tokio::sync::mpsc::channel;
+use tokio::{sync::mpsc::channel, task::JoinSet};
 
 use crate::{
     ip_grabber::IpGrabber,
@@ -11,7 +11,7 @@ pub struct Runner {
     grabber: IpGrabber,
     poll_secs: u64,
     pers: Persistence,
-    dns_token: String,
+    dns_tokens: Vec<String>,
 }
 
 impl Runner {
@@ -19,7 +19,7 @@ impl Runner {
         iface: String,
         poll_secs: u64,
         pers_file_path: Option<&PathBuf>,
-        dns_token: String,
+        dns_tokens: Vec<String>,
     ) -> Self {
         let pers = if let Some(fp) = pers_file_path {
             Persistence::new(fp).expect("File should be valid")
@@ -44,7 +44,7 @@ impl Runner {
             grabber,
             poll_secs,
             pers,
-            dns_token,
+            dns_tokens,
         }
     }
 
@@ -53,12 +53,13 @@ impl Runner {
             grabber,
             poll_secs: _,
             pers,
-            dns_token,
+            dns_tokens,
         } = self;
 
         let (sender, mut receiver) = channel(10000);
 
         tokio::spawn(async move { grabber.run(sender, self.poll_secs).await });
+        let mut set = JoinSet::new();
 
         while let Some(ip) = receiver.recv().await {
             if let Err(e) = pers.replace_ip(&ip) {
@@ -67,22 +68,29 @@ impl Runner {
 
             log::info!("Detected new IP: {}, updating FreeDNS...", ip);
 
-            let update_url = format!(
-                "https://freedns.afraid.org/dynamic/update.php?{}&address={}",
-                dns_token, ip
-            );
+            for token in &dns_tokens {
+                let update_url = format!(
+                    "https://freedns.afraid.org/dynamic/update.php?{}&address={}",
+                    token, ip
+                );
 
-            // Send the request
-            match reqwest::get(&update_url).await {
-                Ok(resp) => {
-                    if resp.status().is_success() {
-                        log::info!("FreeDNS update successful for {}", ip);
-                    } else {
-                        log::error!("FreeDNS update failed: Status {}", resp.status());
+                let fut = async move {
+                    match reqwest::get(&update_url).await {
+                        Ok(resp) => {
+                            if resp.status().is_success() {
+                                log::info!("FreeDNS update successful for {}", ip);
+                            } else {
+                                log::error!("FreeDNS update failed: Status {}", resp.status());
+                            }
+                        }
+                        Err(e) => log::error!("Failed to send request to FreeDNS: {:?}", e),
                     }
-                }
-                Err(e) => log::error!("Failed to send request to FreeDNS: {:?}", e),
+                };
+
+                set.spawn(fut);
             }
         }
+
+        set.join_all().await;
     }
 }
