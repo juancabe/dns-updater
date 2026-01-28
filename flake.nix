@@ -1,0 +1,93 @@
+{
+  description = "DNS Updater Service";
+
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  };
+
+  outputs = { self, nixpkgs }: let
+    supportedSystems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
+    forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
+    pkgsFor = system: nixpkgs.legacyPackages.${system};
+  in {
+    # 1. The Rust Package
+    packages = forAllSystems (system: let
+      pkgs = pkgsFor system;
+    in {
+      default = pkgs.rustPlatform.buildRustPackage {
+        pname = "dns-updater";
+        version = "0.1.0";
+        src = ./.;
+        cargoLock = {
+          lockFile = ./Cargo.lock;
+        };
+      };
+    });
+
+    # 2. The Home Manager Module
+    homeManagerModules.default = { config, lib, pkgs, ... }:
+      let
+        cfg = config.services.dns-updater;
+      in {
+        options.services.dns-updater = {
+          enable = lib.mkEnableOption "dns-updater service";
+
+          package = lib.mkOption {
+            type = lib.types.package;
+            default = self.packages.${pkgs.system}.default;
+            description = "The dns-updater package to use.";
+          };
+
+          interface = lib.mkOption {
+            type = lib.types.str;
+            description = "The network interface to monitor (e.g., eth0, wlan0).";
+            example = "eth0";
+          };
+
+          pollSecs = lib.mkOption {
+            type = lib.types.int;
+            default = 60;
+            description = "How often to poll in seconds.";
+          };
+
+          dnsTokens = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            description = "List of DNS tokens.";
+            example = [ "token1" "token2" ];
+          };
+
+          databaseFile = lib.mkOption {
+            type = lib.types.nullOr lib.types.path;
+            default = null;
+            description = "Optional path to the database file.";
+          };
+        };
+
+        config = lib.mkIf cfg.enable {
+          systemd.user.services.dns-updater = {
+            Unit = {
+              Description = "DNS Updater Service";
+              After = [ "network.target" ];
+            };
+
+            Service = {
+              ExecStart = "${cfg.package}/bin/dns-updater";
+              Restart = "always";
+              
+              # Map Nix options to the Environment Variables your Rust code expects
+              Environment = [
+                "RUST_LOG=info"
+                "INTERFACE=${cfg.interface}"
+                "POLL_SECS=${toString cfg.pollSecs}"
+                "DNS_TOKEN=${builtins.concatStringsSep "," cfg.dnsTokens}"
+              ] ++ (lib.optional (cfg.databaseFile != null) "DATABASE_FILE=${cfg.databaseFile}");
+            };
+
+            Install = {
+              WantedBy = [ "default.target" ];
+            };
+          };
+        };
+      };
+  };
+}
