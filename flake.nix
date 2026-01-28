@@ -71,7 +71,7 @@
             };
 
             Service = {
-              ExecStart = "${cfg.package}/bin/dns-updater";
+              ExecStart = "${cfg.package}/bin/dns_updater";
               Restart = "always";
               
               # Map Nix options to the Environment Variables your Rust code expects
