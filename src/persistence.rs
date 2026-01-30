@@ -61,7 +61,7 @@ impl Persistence {
             .iter()
             .filter_map(|fp| {
                 fp.to_str().and_then(|s| {
-                    if s.ends_with(&format!("/{file_name}")) {
+                    if s.ends_with(&format!("{file_name}")) {
                         Some(fp)
                     } else {
                         None
