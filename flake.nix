@@ -44,22 +44,10 @@
             example = "eth0";
           };
 
-          pollSecs = lib.mkOption {
-            type = lib.types.int;
-            default = 60;
-            description = "How often to poll in seconds.";
-          };
-
-          dnsTokens = lib.mkOption {
+          dnsTuples = lib.mkOption {
             type = lib.types.listOf lib.types.str;
-            description = "List of DNS tokens.";
-            example = [ "token1" "token2" ];
-          };
-
-          databaseFile = lib.mkOption {
-            type = lib.types.nullOr lib.types.path;
-            default = null;
-            description = "Optional path to the database file.";
+            description = "List of DNS batches. DD for DuckDNS, FD for FreeDNS";
+            example = [ "DD;8709122eruoi189014h;ipv4;123;jejejej" "(DD;8709122eruoi189014s;ipv4;123;jejejej)" ];
           };
         };
 
@@ -78,9 +66,8 @@
               Environment = [
                 "RUST_LOG=info"
                 "INTERFACE=${cfg.interface}"
-                "POLL_SECS=${toString cfg.pollSecs}"
-                "DNS_TOKEN=${builtins.concatStringsSep "," cfg.dnsTokens}"
-              ] ++ (lib.optional (cfg.databaseFile != null) "DATABASE_FILE=${cfg.databaseFile}");
+                "DNS_TUPLES=${builtins.concatStringsSep "," cfg.dnsTokens}"
+              ];
             };
 
             Install = {
