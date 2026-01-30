@@ -1,96 +1,75 @@
-use std::path::PathBuf;
-
-use tokio::{sync::mpsc::channel, task::JoinSet};
+use tokio::sync::mpsc;
 
 use crate::{
-    ip_grabber::IpGrabber,
+    dyn_dns::DynDns,
+    ip_grabber::{self, IpGrabber},
     persistence::{self, Persistence},
 };
 
+pub type DynGrabber = (Box<dyn DynDns>, IpGrabber);
+
 pub struct Runner {
-    grabber: IpGrabber,
-    poll_secs: u64,
     pers: Persistence,
-    dns_tokens: Vec<String>,
+    dyn_dnss: Vec<DynGrabber>,
+}
+
+#[derive(Debug)]
+pub enum Error {
+    PersistenceError(persistence::Error),
+    GrabberError(ip_grabber::Error),
 }
 
 impl Runner {
-    pub fn new(
-        iface: String,
-        poll_secs: u64,
-        pers_file_path: Option<&PathBuf>,
-        dns_tokens: Vec<String>,
-    ) -> Self {
-        let pers = if let Some(fp) = pers_file_path {
-            Persistence::new(fp).expect("File should be valid")
-        } else {
-            Persistence::default()
-        };
-        let ip = match pers.load_ip() {
-            Ok(a) => Some(a),
-            Err(e) => match e {
-                persistence::Error::Io(error) => {
-                    panic!("Unable to use persistence for the first time: {error:?}")
-                }
-                persistence::Error::Parse(addr_parse_error) => {
-                    log::warn!("Error parsing saved IP, using none: {addr_parse_error:?}");
-                    None
-                }
-                _ => unreachable!(),
-            },
-        };
-        let grabber = IpGrabber::new(iface, ip).unwrap();
-        Self {
-            grabber,
-            poll_secs,
-            pers,
-            dns_tokens,
-        }
+    pub fn new(iface: String, dyn_dnss: Vec<Box<dyn DynDns>>) -> Result<Self, Error> {
+        let pers = Persistence::new(dyn_dnss.iter().map(|dd| dd.file_name()))
+            .map_err(Error::PersistenceError)?;
+
+        let dyn_dnss: Result<Vec<DynGrabber>, ip_grabber::Error> = dyn_dnss
+            .into_iter()
+            .map(|dyn_dns| {
+                let ipv = dyn_dns.get_ip_version();
+                let ps = dyn_dns.get_poll_secs();
+                Ok((dyn_dns, IpGrabber::new(iface.clone(), ipv, ps)?))
+            })
+            .collect();
+        let dyn_dnss = dyn_dnss.map_err(Error::GrabberError)?;
+
+        Ok(Self { pers, dyn_dnss })
     }
 
     pub async fn run(self) {
-        let Runner {
-            grabber,
-            poll_secs: _,
-            pers,
-            dns_tokens,
-        } = self;
+        let Runner { pers, dyn_dnss } = self;
 
-        let (sender, mut receiver) = channel(10000);
+        let (sender, mut receiver) = mpsc::channel(10000);
 
-        tokio::spawn(async move { grabber.run(sender, self.poll_secs).await });
-        let mut set = JoinSet::new();
-
-        while let Some(ip) = receiver.recv().await {
-            if let Err(e) = pers.replace_ip(&ip) {
-                log::error!("Error when saving IP: {e:?}");
-            }
-
-            log::info!("Detected new IP: {}, updating FreeDNS...", ip);
-
-            for token in &dns_tokens {
-                let update_url = format!(
-                    "https://freedns.afraid.org/dynamic/update.php?{}&address={}",
-                    token, ip
-                );
-
-                let fut = async move {
-                    match reqwest::get(&update_url).await {
-                        Ok(resp) => {
-                            if resp.status().is_success() {
-                                log::info!("FreeDNS update successful for {}", ip);
-                            } else {
-                                log::error!("FreeDNS update failed: Status {}", resp.status());
-                            }
-                        }
-                        Err(e) => log::error!("Failed to send request to FreeDNS: {:?}", e),
+        let it = dyn_dnss.into_iter().map(|(mut dns, mut grabber)| {
+            let (gs, mut gr) = mpsc::channel(10000);
+            tokio::spawn(async move { grabber.run(gs).await });
+            let sender = sender.clone();
+            let file_name = dns.file_name().to_string();
+            async move {
+                while let Some(ip) = gr.recv().await {
+                    if let Err(e) = sender.send((ip, file_name.clone())).await {
+                        log::error!(
+                            "Error sending new IP to persistence, won't update remote, error: {e:?}"
+                        );
+                    } else if let Err(e) = dns.update(ip).await {
+                        log::error!("Error updating DNS: {e:?}")
                     }
-                };
-
-                set.spawn(fut);
+                }
             }
+        });
+
+        for fut in it {
+            tokio::spawn(fut);
         }
 
-        set.join_all().await;
+        drop(sender);
+
+        while let Some((ip, file_name)) = receiver.recv().await {
+            if let Err(e) = pers.replace_ip(&ip, &file_name).await {
+                log::error!("Error when saving IP: {e:?}");
+            }
+        }
     }
 }

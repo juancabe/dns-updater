@@ -1,15 +1,21 @@
 use std::fs;
 use std::fs::OpenOptions;
 use std::io;
-use std::net::{AddrParseError, Ipv6Addr};
-use std::path::Path;
+use std::net::{AddrParseError, IpAddr};
 use std::path::PathBuf;
 
 #[derive(Debug)]
-pub enum Error {
+pub enum CreateError {
+    NoFileNames,
     CannotUseFile(String),
+}
+
+#[derive(Debug)]
+pub enum Error {
+    CE(CreateError),
     Io(io::Error),
     Parse(AddrParseError),
+    NoFileNames,
 }
 
 impl From<io::Error> for Error {
@@ -25,37 +31,58 @@ impl From<AddrParseError> for Error {
 }
 
 pub struct Persistence {
-    pub file_path: PathBuf,
-}
-
-impl Default for Persistence {
-    fn default() -> Self {
-        Self::new(&PathBuf::from("./current_ipv6.txt")).unwrap()
-    }
+    pub file_paths: Vec<PathBuf>,
 }
 
 impl Persistence {
-    pub fn new(file_path: &Path) -> Result<Self, Error> {
-        let _ = OpenOptions::new()
-            .write(true)
-            .create(true) // Create if it doesn't exist
-            .truncate(false) // Do NOT wipe the file if it exists
-            .open(file_path)
-            .map_err(|e| Error::CannotUseFile(e.to_string()))?;
-
-        Ok(Self {
-            file_path: file_path.to_path_buf(),
-        })
+    pub fn new<'a, T: IntoIterator<Item = &'a str>>(file_names: T) -> Result<Self, Error> {
+        let fps: Result<Vec<PathBuf>, CreateError> = file_names
+            .into_iter()
+            .map(|name| {
+                let pb = PathBuf::from(name);
+                let _ = OpenOptions::new()
+                    .write(true)
+                    .create(true) // Create if it doesn't exist
+                    .truncate(false) // Do NOT wipe the file if it exists
+                    .open(&pb)
+                    .map_err(|e| CreateError::CannotUseFile(e.to_string()))?;
+                Ok(pb)
+            })
+            .collect();
+        let fps = fps.map_err(Error::CE)?;
+        if fps.is_empty() {
+            Err(Error::CE(CreateError::NoFileNames))?
+        }
+        Ok(Self { file_paths: fps })
     }
+
+    fn match_file_name(&self, file_name: &str) -> Result<&PathBuf, Error> {
+        self.file_paths
+            .iter()
+            .filter_map(|fp| {
+                fp.to_str().and_then(|s| {
+                    if s.ends_with(&format!("/{file_name}")) {
+                        Some(fp)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .next()
+            .ok_or(Error::NoFileNames)
+    }
+
     /// Overwrites the file with the new IP address
-    pub fn replace_ip(&self, ip: &Ipv6Addr) -> Result<(), Error> {
-        fs::write(&self.file_path, ip.to_string())?;
+    pub async fn replace_ip(&self, ip: &IpAddr, file_name: &str) -> Result<(), Error> {
+        let fp = self.match_file_name(file_name)?;
+        tokio::fs::write(fp, ip.to_string()).await?;
         Ok(())
     }
 
     /// Reads the IP from the file
-    pub fn load_ip(&self) -> Result<Ipv6Addr, Error> {
-        let content = fs::read_to_string(&self.file_path)?;
+    pub fn load_ip(&self, file_name: &str) -> Result<IpAddr, Error> {
+        let fp = self.match_file_name(file_name)?;
+        let content = fs::read_to_string(fp)?;
         let ip = content.trim().parse()?;
         Ok(ip)
     }
