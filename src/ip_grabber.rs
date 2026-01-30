@@ -55,6 +55,7 @@ impl IpGrabber {
     /// Only sends the IP if it is found and is DIFFERENT from the last one sent.
     pub async fn run(&mut self, sender: Sender<IpAddr>) {
         let mut interval = tokio::time::interval(Duration::from_secs(self.poll_secs));
+        let mut err_interval = tokio::time::interval(Duration::from_secs(self.poll_secs / 10));
         loop {
             match self.get_updated().await {
                 Ok(current_ip) => {
@@ -68,7 +69,7 @@ impl IpGrabber {
 
                     self.last_ip = Some(current_ip);
 
-                    log::info!("New Stable IPv6 detected: {}", current_ip);
+                    log::info!("New Stable ip detected: {}", current_ip);
 
                     // Send the new IP. If the receiver dropped, stop the loop.
                     if sender.send(current_ip).await.is_err() {
@@ -77,7 +78,8 @@ impl IpGrabber {
                     }
                 }
                 Err(e) => {
-                    log::error!("Couldn't find an IP now, will try again, error: {e:?}");
+                    log::debug!("Couldn't find an IP now, will try again, error: {e:?}");
+                    err_interval.tick().await;
                 }
             }
         }

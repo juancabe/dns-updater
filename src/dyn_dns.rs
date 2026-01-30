@@ -16,6 +16,7 @@ pub trait PersistsToFile {
     fn file_name(&self) -> &str;
 }
 
+#[derive(Debug)]
 pub struct FreeDns {
     token: String,
     file_name: String,
@@ -26,12 +27,14 @@ pub struct FreeDns {
 impl FreeDns {
     pub fn new(token: String, ip_version: IpVersion, poll_secs: u64) -> Self {
         let file_name = format!("FreeDNS_{}_{}", token, ip_version.simple_name());
-        Self {
+        let s = Self {
             token,
             file_name,
             ip_version,
             poll_secs,
-        }
+        };
+        log::info!("Created DynDns: {s:?}");
+        s
     }
 }
 
@@ -53,6 +56,7 @@ impl DynDns for FreeDns {
             update_url.push_str(&ip.to_string());
         }
 
+        log::info!("Calling HTTP: {update_url}");
         match reqwest::get(&update_url).await {
             Ok(resp) => {
                 if resp.status().is_success() {
@@ -75,6 +79,7 @@ impl DynDns for FreeDns {
     }
 }
 
+#[derive(Debug)]
 pub struct DuckDns {
     token: String,
     name: String,
@@ -86,13 +91,15 @@ pub struct DuckDns {
 impl DuckDns {
     pub fn new(token: String, name: String, ip_version: IpVersion, poll_secs: u64) -> Self {
         let file_name = format!("DuckDNS_{}_{}", token, name);
-        Self {
+        let s = Self {
             token,
             name,
             file_name,
             ip_version,
             poll_secs,
-        }
+        };
+        log::info!("Created DynDns: {s:?}");
+        s
     }
 }
 
@@ -113,7 +120,7 @@ impl DynDns for DuckDns {
             update_url.push_str("&ip=");
             update_url.push_str(&ip.to_string());
         }
-
+        log::info!("Calling HTTP: {update_url}");
         match reqwest::get(&update_url).await {
             Ok(resp) => {
                 if resp.status().is_success() {
