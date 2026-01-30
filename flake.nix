@@ -66,7 +66,7 @@
               Environment = [
                 "RUST_LOG=info"
                 "INTERFACE=${cfg.interface}"
-                "DNS_TUPLES=${builtins.concatStringsSep "," cfg.dnsTokens}"
+                "DNS_TUPLES=${builtins.concatStringsSep "," cfg.dnsTuples}"
               ];
             };
 
