@@ -117,7 +117,7 @@ impl DynDns for DuckDns {
             self.name, self.token
         );
         if let IpAddr::V6(ip) = ip {
-            update_url.push_str("&ip=");
+            update_url.push_str("&ipv6=");
             update_url.push_str(&ip.to_string());
         }
         log::info!("Calling HTTP: {update_url}");

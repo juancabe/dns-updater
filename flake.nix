@@ -64,7 +64,7 @@
               
               # Map Nix options to the Environment Variables your Rust code expects
               Environment = [
-                "RUST_LOG=info"
+                "RUST_LOG=debug"
                 "INTERFACE=${cfg.interface}"
                 "DNS_TUPLES=${builtins.concatStringsSep "," cfg.dnsTuples}"
               ];
