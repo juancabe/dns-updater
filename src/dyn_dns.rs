@@ -1,11 +1,12 @@
-use std::net::IpAddr;
+use std::{fmt::Debug, net::IpAddr, time::Duration};
 
 use async_trait::async_trait;
+use reqwest::{Client, redirect::Policy};
 
 use crate::{IpVersion, SimpleName};
 
 #[async_trait]
-pub trait DynDns: PersistsToFile + Send + Sync {
+pub trait DynDns: PersistsToFile + Send + Sync + Debug {
     // ip is optional because for Ip4Addr APIs auto detect
     async fn update(&mut self, ip: IpAddr) -> Result<(), String>;
     fn get_ip_version(&self) -> IpVersion;
@@ -143,14 +144,103 @@ impl DynDns for DuckDns {
     }
 }
 
+#[derive(Debug)]
+pub struct Ovh {
+    username: String,
+    password: String,
+    subdomain: String,
+    file_name: String,
+    ip_version: IpVersion,
+    poll_secs: u64,
+}
+
+impl Ovh {
+    pub fn new(
+        username: String,
+        password: String,
+        subdomain: String,
+        ip_version: IpVersion,
+        poll_secs: u64,
+    ) -> Self {
+        let file_name = format!("OVH_{username}_{subdomain}_{}", ip_version.simple_name());
+        let s = Self {
+            username,
+            password,
+            subdomain,
+            file_name,
+            ip_version,
+            poll_secs,
+        };
+        log::info!("Created DynDns: {s:?}");
+        s
+    }
+}
+
+impl PersistsToFile for Ovh {
+    fn file_name(&self) -> &str {
+        &self.file_name
+    }
+}
+
+#[async_trait]
+impl DynDns for Ovh {
+    async fn update(&mut self, ip: IpAddr) -> Result<(), String> {
+        let client = Client::builder()
+            // Equivalent to `-m 5` (Timeout the entire request after 5 seconds)
+            .timeout(Duration::from_secs(5))
+            // Equivalent to `-L` (Follow redirects). reqwest follows up to 10 by default,
+            // but we are setting it explicitly here for clarity.
+            .redirect(Policy::limited(10))
+            .build()
+            .map_err(|e| format!("[Ovh::update] Error creating reqwest client: {e:?}"))?;
+
+        let fut = client
+            .get("https://www.ovh.com/nic/update")
+            .query(&[
+                ("system", "dyndns"),
+                ("hostname", &self.subdomain),
+                ("myip", &ip.to_string()),
+            ])
+            .basic_auth(&self.username, Some(&self.password))
+            .send();
+
+        log::info!(
+            "Calling HTTP: {update_url}",
+            update_url = "https://www.ovh.com/nic/update"
+        );
+        match fut.await {
+            Ok(resp) => {
+                if resp.status().is_success() {
+                    log::info!("Ovh update successful for {}", ip);
+                    Ok(())
+                } else {
+                    Err(format!("Ovh update failed: Status {}", resp.status()))
+                }
+            }
+            Err(e) => Err(format!("Failed to send request to Ovh: {:?}", e)),
+        }
+    }
+
+    fn get_ip_version(&self) -> IpVersion {
+        self.ip_version
+    }
+
+    fn get_poll_secs(&self) -> u64 {
+        self.poll_secs
+    }
+}
+
 pub fn parse_dns_tuples(to_parse: &str) -> Result<Vec<Box<dyn DynDns>>, String> {
     // to_parse := BATCH,BATCH,...
 
     // let free_dns = FreeDns::new(token, ip_version);
     // ("FD";TOKEN;VERSION;POLL_SECS) = BATCH
-
+    //
     // let duck_dns = DuckDns::new(token, name, ip_version);
     // ("DD";TOKEN;VERSION;POLL_SECS;NAME) = BATCH
+    //
+    // let duck_dns = DuckDns::new(token, name, ip_version);
+    // ("OVH";USERNAME;PASSWORD;SUBDOMAIN;VERSION;POLL_SECS) = BATCH
     //
     // Parenthesis are not mandatory
 
@@ -202,6 +292,34 @@ pub fn parse_dns_tuples(to_parse: &str) -> Result<Vec<Box<dyn DynDns>>, String> 
                     .to_string();
                 Ok(Box::new(DuckDns::new(token, name, version, poll_secs)) as Box<dyn DynDns>)
             }
+            Some("OVH") => {
+                let username = parts
+                    .next()
+                    .ok_or("No USERNAME found in batch".to_string())?
+                    .to_string();
+                let password = parts
+                    .next()
+                    .ok_or("No PASSWORD found in batch".to_string())?
+                    .to_string();
+                let subdomain = parts
+                    .next()
+                    .ok_or("No SUBDOMAIN found in batch".to_string())?
+                    .to_string();
+
+                let version: IpVersion = parts
+                    .next()
+                    .ok_or("No VERSION found in batch".to_string())?
+                    .try_into()?;
+                let poll_secs: u64 = parts
+                    .next()
+                    .ok_or("No POLL_SECS found in batch".to_string())?
+                    .parse()
+                    .map_err(|e| format!("Couldn't parse POLL_SECS error: {e:?}"))?;
+                Ok(
+                    Box::new(Ovh::new(username, password, subdomain, version, poll_secs))
+                        as Box<dyn DynDns>,
+                )
+            }
             Some(t) => Err(format!("Invalid Dynamic Dns Type found: {t}")),
         })
         .collect()
@@ -237,5 +355,53 @@ mod test {
 
         let dd_fails = "(DD;jejejej;;),DD;jajajaj;;ipv6";
         assert!(parse_dns_tuples(dd_fails).is_err());
+    }
+
+    #[test]
+    fn test_ovh_parsing() {
+        // Format: OVH;USERNAME;PASSWORD;SUBDOMAIN;VERSION;POLL_SECS
+        let input = "OVH;user123;pass456;home.example.com;ipv4;60";
+        let results = parse_dns_tuples(input).expect("Should parse valid OVH string");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get_ip_version().simple_name(), "ipv4");
+        assert_eq!(results[0].get_poll_secs(), 60);
+        assert!(results[0].file_name().contains("user123"));
+        assert!(results[0].file_name().contains("home.example.com"));
+    }
+
+    #[test]
+    fn test_mixed_batch_parsing() {
+        let input = "OVH;user;pass;host;ipv4;30, DD;tok;ipv6;60;name, (FD;tok2;ipv4;0)";
+        let results = parse_dns_tuples(input).expect("Should parse mixed types");
+
+        assert_eq!(results.len(), 3);
+        // Verify types or order if necessary
+    }
+
+    #[test]
+    fn test_ovh_missing_parts() {
+        // Missing the last part (POLL_SECS)
+        let input = "OVH;user123;pass456;home.example.com;ipv4";
+        let result = parse_dns_tuples(input);
+        assert!(result.is_err(), "Should fail when parts are missing");
+        assert!(result.unwrap_err().contains("No POLL_SECS"));
+    }
+
+    #[test]
+    fn test_invalid_type() {
+        let input = "UNKNOWN;data1;data2";
+        let result = parse_dns_tuples(input);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid Dynamic Dns Type"));
+    }
+
+    #[test]
+    fn test_empty_segments() {
+        // Testing trailing commas or empty segments
+        let input = "OVH;u;p;s;ipv4;10,,FD;t;ipv4;0";
+        // Depending on your logic, this might fail on the empty string between commas
+        let result = parse_dns_tuples(input);
+        assert!(result.is_err(), "Empty segment between commas should fail");
     }
 }
