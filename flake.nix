@@ -45,9 +45,9 @@
           };
 
           dnsTuples = lib.mkOption {
-            type = lib.types.listOf lib.types.str;
-            description = "List of DNS batches. DD for DuckDNS, FD for FreeDNS";
-            example = [ "DD;8709122eruoi189014h;ipv4;123;jejejej" "(DD;8709122eruoi189014s;ipv4;123;jejejej)" ];
+            type = lib.types.path;
+            description = "Path to a file, where each line represents a DNS tuple (e.g., 'DD;token;ipv4;interval;domains' or '(DD;token;ipv4;interval;domains)').";
+            example = "./dns_tuples.txt";
           };
         };
 
@@ -66,7 +66,7 @@
               Environment = [
                 "RUST_LOG=debug"
                 "INTERFACE=${cfg.interface}"
-                "DNS_TUPLES=${builtins.concatStringsSep "," cfg.dnsTuples}"
+                "DNS_TUPLES=${builtins.readFile cfg.dnsTuples}"
               ];
             };
 
