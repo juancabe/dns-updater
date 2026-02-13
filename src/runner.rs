@@ -49,12 +49,16 @@ impl Runner {
             let file_name = dns.file_name().to_string();
             async move {
                 while let Some(ip) = gr.recv().await {
-                    if let Err(e) = sender.send((ip, file_name.clone())).await {
-                        log::error!(
-                            "Error sending new IP to persistence, won't update remote, error: {e:?}"
-                        );
-                    } else if let Err(e) = dns.update(ip).await {
-                        log::error!("Error updating DNS: {e:?}")
+                    match dns.update(ip).await {
+                        Ok(()) => {
+                            // Update successful, now persist the new IP
+                            if let Err(e) = sender.send((ip, file_name.clone())).await {
+                                log::error!("DNS update succeeded, but failed to send IP to persistence. The IP might be updated again unnecessarily on next check. Error: {e:?}");
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Error updating DNS: {e:?}")
+                        }
                     }
                 }
             }

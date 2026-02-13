@@ -17,12 +17,22 @@ pub trait PersistsToFile {
     fn file_name(&self) -> &str;
 }
 
-#[derive(Debug)]
 pub struct FreeDns {
     token: String,
     file_name: String,
     ip_version: IpVersion,
     poll_secs: u64,
+}
+
+impl std::fmt::Debug for FreeDns {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FreeDns")
+            .field("token", &"[REDACTED]")
+            .field("file_name", &self.file_name)
+            .field("ip_version", &self.ip_version)
+            .field("poll_secs", &self.poll_secs)
+            .finish()
+    }
 }
 
 impl FreeDns {
@@ -80,13 +90,24 @@ impl DynDns for FreeDns {
     }
 }
 
-#[derive(Debug)]
 pub struct DuckDns {
     token: String,
     name: String,
     file_name: String,
     ip_version: IpVersion,
     poll_secs: u64,
+}
+
+impl std::fmt::Debug for DuckDns {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DuckDns")
+            .field("token", &"[REDACTED]")
+            .field("name", &self.name)
+            .field("file_name", &self.file_name)
+            .field("ip_version", &self.ip_version)
+            .field("poll_secs", &self.poll_secs)
+            .finish()
+    }
 }
 
 impl DuckDns {
@@ -144,7 +165,6 @@ impl DynDns for DuckDns {
     }
 }
 
-#[derive(Debug)]
 pub struct Ovh {
     username: String,
     password: String,
@@ -152,6 +172,19 @@ pub struct Ovh {
     file_name: String,
     ip_version: IpVersion,
     poll_secs: u64,
+}
+
+impl std::fmt::Debug for Ovh {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Ovh")
+            .field("username", &self.username)
+            .field("password", &"[REDACTED]")
+            .field("subdomain", &self.subdomain)
+            .field("file_name", &self.file_name)
+            .field("ip_version", &self.ip_version)
+            .field("poll_secs", &self.poll_secs)
+            .finish()
+    }
 }
 
 impl Ovh {
